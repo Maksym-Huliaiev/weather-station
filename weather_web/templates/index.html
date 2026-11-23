@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Метеостанція Raspberry Pi</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #f1f5f9;
+            --card: #ffffff;
+            --inner-card: #f8fafc;
+            --border: #e2e8f0;
+            --frame-border: #cbd5e1;
+            --text: #0f172a;
+            --muted: #64748b;
+            --accent: #0284c7;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        body { background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto; }
+        
+        header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 20px; }
+        h1 { font-size: 1.5rem; font-weight: 700; }
+
+        .btn { background: var(--card); color: var(--text); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 0.88rem; cursor: pointer; text-decoration: none; transition: all 0.15s; }
+        .btn:hover { border-color: var(--accent); color: var(--accent); }
+        .btn.active { background: var(--accent); color: #ffffff; border-color: var(--accent); }
+        .btn-primary { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+        .btn-primary:hover { background: #334155; color: #ffffff; }
+        input[type="date"] { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 8px; font-size: 0.88rem; font-weight: 500; cursor: pointer; }
+
+        .live-frame {
+            background: var(--card);
+            border: 1.5px solid var(--frame-border);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 26px;
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+        }
+        .live-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .live-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        .live-dot {
+            width: 10px;
+            height: 10px;
+            background: #16a34a;
+            border-radius: 50%;
+            box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
+        }
+        .live-time { color: var(--muted); font-size: 0.88rem; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(225px, 1fr)); gap: 14px; }
+        .card { background: var(--inner-card); padding: 18px; border-radius: 12px; border: 1px solid var(--border); }
+        .card-title { color: var(--muted); font-size: 0.88rem; font-weight: 500; margin-bottom: 6px; }
+        .card-value { font-size: 1.95rem; font-weight: 700; }
+        .card-unit-alt { font-size: 0.92rem; font-weight: 500; color: var(--muted); }
+        .card-sub { color: var(--muted); font-size: 0.82rem; margin-top: 6px; }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .history-title-block h2 { font-size: 1.15rem; font-weight: 700; margin-bottom: 2px; }
+        .history-subtitle { color: var(--muted); font-size: 0.88rem; }
+        .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+
+        .summary-bar { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 13px 18px; margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 20px; font-size: 0.9rem; color: var(--muted); }
+        .summary-bar strong { color: var(--text); }
+
+        .charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+        @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+        .chart-box { background: var(--card); padding: 18px; border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); }
+        .chart-box h3 { font-size: 1rem; color: var(--text); margin-bottom: 12px; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Метеостанція та реєстратор інсоляції</h1>
+        <a id="export-link" href="/export" class="btn btn-primary">Завантажити CSV</a>
+    </header>
+
+    <section class="live-frame">
+        <div class="live-header">
+            <div class="live-title">
+                <span class="live-dot"></span>
+                <span>Поточні показники (прямо зараз)</span>
+            </div>
+            <div class="live-time">Останній замір датчиків: <strong id="last-time">--:--:--</strong></div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-title">Освітленість (інсоляція)</div>
+                <div class="card-value" style="color: #d97706;"><span id="lux">--</span> лк</div>
+                <div class="card-sub">Датчик BH1750</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Температура повітря</div>
+                <div class="card-value" style="color: #e11d48;"><span id="temp">--</span> °C</div>
+                <div class="card-sub">Датчик BME280</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Відносна вологість</div>
+                <div class="card-value" style="color: #0284c7;"><span id="hum">--</span> %</div>
+                <div class="card-sub">Датчик BME280</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Атмосферний тиск</div>
+                <div class="card-value" style="color: #16a34a;">
+                    <span id="press-mmhg">--</span> мм <span class="card-unit-alt">(<span id="press-hpa">--</span> гПа)</span>
+                </div>
+                <div class="card-sub">Датчик BME280</div>
+            </div>
+        </div>
+    </section>
+
+    <div class="history-header">
+        <div class="history-title-block">
+            <h2>Графіки та архів вимірювань</h2>
+            <div class="history-subtitle">Режим: <strong id="mode-label">Реальний час (останні виміри)</strong></div>
+        </div>
+        <div class="controls">
+            <button id="btn-live" class="btn active" onclick="setLiveMode()">Наживо (Live)</button>
+            <button id="btn-today" class="btn" onclick="setTodayMode()">Сьогодні</button>
+            <input type="date" id="date-picker" onchange="setDateMode(this.value)" title="Оберіть дату архіву">
+        </div>
+    </div>
+
+    <div class="summary-bar" id="summary-bar" style="display: none;">
+        <span>Записів: <strong id="stat-count">0</strong></span>
+        <span>Темп: <strong id="stat-temp">--</strong></span>
+        <span>Вологість: <strong id="stat-hum">--</strong></span>
+        <span>Тиск: <strong id="stat-press">--</strong></span>
+        <span>Макс. освітленість: <strong id="stat-lux">--</strong></span>
+    </div>
+
+    <section class="charts">
+        <div class="chart-box">
+            <h3>Освітленість (лк)</h3>
+            <canvas id="luxChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Температура повітря (°C)</h3>
+            <canvas id="tempChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Відносна вологість (%)</h3>
+            <canvas id="humChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Атмосферний тиск (мм рт. ст.)</h3>
+            <canvas id="pressChart"></canvas>
+        </div>
+    </section>
+
+    <script>
+        let currentMode = 'live';
+
+        function getTodayStr() {
+            const now = new Date();
+            const offset = now.getTimezoneOffset() * 60000;
+            return new Date(now - offset).toISOString().split('T')[0];
+        }
+
+        document.getElementById('date-picker').value = getTodayStr();
+
+        function createChart(canvasId, label, color, bgColor, minSpan, clampZero = false) {
+            return new Chart(document.getElementById(canvasId), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: label,
+                        data: [],
+                        borderColor: color,
+                        backgroundColor: bgColor,
+                        borderWidth: 2,
+                        pointRadius: 2.5,
+                        fill: true,
+                        tension: 0.25
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    animation: false,
+                    scales: {
+                        x: { ticks: { color: '#64748b', maxTicksLimit: 7 }, grid: { color: '#f1f5f9' } },
+                        y: {
+                            ticks: { color: '#64748b' },
+                            grid: { color: '#e2e8f0' },
+                            afterDataLimits(scale) {
+                                const range = scale.max - scale.min;
+                                if (range < minSpan) {
+                                    const mid = (scale.max + scale.min) / 2;
+                                    scale.min = clampZero ? Math.max(0, mid - minSpan / 2) : mid - minSpan / 2;
+                                    scale.max = scale.min + minSpan;
+                                }
+                            }
+                        }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        const luxChart = createChart('luxChart', 'Освітленість (лк)', '#d97706', 'rgba(217, 119, 6, 0.12)', 300, true);
+        const tempChart = createChart('tempChart', 'Температура (°C)', '#e11d48', 'rgba(225, 29, 72, 0.10)', 5, false);
+        const humChart = createChart('humChart', 'Вологість (%)', '#0284c7', 'rgba(2, 132, 199, 0.10)', 10, true);
+        const pressChart = createChart('pressChart', 'Тиск (мм рт. ст.)', '#16a34a', 'rgba(22, 163, 74, 0.10)', 6, false);
+
+        function updateButtons() {
+            document.getElementById('btn-live').classList.toggle('active', currentMode === 'live');
+            document.getElementById('btn-today').classList.toggle('active', currentMode === getTodayStr());
+            const exportLink = document.getElementById('export-link');
+            exportLink.href = currentMode === 'live' ? '/export' : `/export?date=${currentMode}`;
+        }
+
+        function setLiveMode() {
+            currentMode = 'live';
+            document.getElementById('mode-label').textContent = 'Реальний час (останні виміри)';
+            updateButtons();
+            updateDashboard();
+        }
+
+        function setTodayMode() {
+            const today = getTodayStr();
+            document.getElementById('date-picker').value = today;
+            setDateMode(today);
+        }
+
+        function setDateMode(dateStr) {
+            if (!dateStr) return;
+            currentMode = dateStr;
+            document.getElementById('mode-label').textContent = `Архів за ${dateStr} (інтервал 1 хв)`;
+            updateButtons();
+            updateDashboard();
+        }
+
+        async function updateDashboard() {
+            try {
+                const res = await fetch(`/api/data?date=${currentMode}`);
+                const data = await res.json();
+                const cur = data.current;
+
+                document.getElementById('last-time').textContent = cur.timestamp;
+                document.getElementById('lux').textContent = cur.lux;
+                document.getElementById('temp').textContent = cur.temperature;
+                document.getElementById('hum').textContent = cur.humidity;
+                document.getElementById('press-mmhg').textContent = cur.pressure_mmhg;
+                document.getElementById('press-hpa').textContent = cur.pressure_hpa;
+
+                const summaryBar = document.getElementById('summary-bar');
+                if (data.stats) {
+                    summaryBar.style.display = 'flex';
+                    document.getElementById('stat-count').textContent = data.stats.count;
+                    document.getElementById('stat-temp').textContent = `${data.stats.temp_min} … ${data.stats.temp_max} °C (сер. ${data.stats.temp_avg} °C)`;
+                    document.getElementById('stat-hum').textContent = `${data.stats.hum_min} … ${data.stats.hum_max} %`;
+                    document.getElementById('stat-press').textContent = `${data.stats.press_min} … ${data.stats.press_max} мм`;
+                    document.getElementById('stat-lux').textContent = `${data.stats.lux_max} лк (сер. ${data.stats.lux_avg} лк)`;
+                } else {
+                    summaryBar.style.display = 'none';
+                }
+
+                const labels = data.history.map(item => {
+                    const timePart = item.timestamp.split(' ')[1];
+                    return currentMode === 'live' ? timePart : timePart.slice(0, 5);
+                });
+
+                luxChart.data.labels = labels;
+                luxChart.data.datasets[0].data = data.history.map(item => item.lux);
+                luxChart.update();
+
+                tempChart.data.labels = labels;
+                tempChart.data.datasets[0].data = data.history.map(item => item.temperature);
+                tempChart.update();
+
+                humChart.data.labels = labels;
+                humChart.data.datasets[0].data = data.history.map(item => item.humidity);
+                humChart.update();
+
+                pressChart.data.labels = labels;
+                pressChart.data.datasets[0].data = data.history.map(item => item.pressure_mmhg);
+                pressChart.update();
+            } catch (err) {
+                console.error('Помилка оновлення:', err);
+            }
+        }
+
+        updateDashboard();
+        setInterval(updateDashboard, 3000);
+    </script>
+</body>
+</html>
